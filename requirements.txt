@@ -4,6 +4,7 @@ pandas
 tqdm
 matplotlib
 seaborn
+scikit-learn
 
 
 
