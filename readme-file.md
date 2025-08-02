@@ -91,4 +91,4 @@ For common issues and their solutions, please refer to the `project_guide.md` fi
 
 ## Contact
 
-For any questions or concerns, please contact [Your Name] at [your.email@example.com].
+For any questions or concerns, please contact Mobina Amrollahi at mobinaa@iastate.edu.
