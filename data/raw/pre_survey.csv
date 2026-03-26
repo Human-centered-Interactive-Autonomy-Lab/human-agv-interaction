@@ -1,0 +1,43 @@
+PID,Age,Gender,Ethnicity,GamingFrequency,VRExperience,VRHeadsetExperience,AGVInteraction,PerfectAutomation_high_expectation,PerfectAutomation_all_or_none,TrustPropensity,AutomationExperience,AutomationExperience_confidence_mean,AutomationExperience_reliance_mean,AutomationExperience_trust_mean,AutomationExperience_safety_mean
+001,28,1,5,Frequently,Moderately experienced,Moderately experienced,Never,4.75,2.0,3.667,3.917,4.0,3.667,4.0,4.0
+002,26,1,2,Occasionally,Very Experienced,Very Experienced,Never,2.25,1.667,3.0,5.667,6.0,6.0,5.333,5.0
+003,24,1,5,Occasionally,Moderately experienced,Neither Inexperienced or Experienced,Very rarely,1.75,2.0,3.0,3.333,4.75,3.0,3.0,1.5
+004,31,2,2,Very rarely,Moderately experienced,Moderately experienced,Never,3.25,3.333,2.833,5.0,4.75,6.667,4.333,4.0
+006,54,1,5,Occasionally,Experienced,Experienced,Never,3.5,3.0,3.167,4.333,5.25,4.0,4.0,3.5
+007,27,1,2,Frequently,Very Inexperienced,Unfamiliar,Never,1.5,2.333,3.5,5.583,6.0,6.0,4.667,5.5
+008,28,1,6,Very rarely,Unfamiliar,Unfamiliar,Never,5.5,2.667,3.833,5.667,7.0,6.667,4.0,4.0
+009,19,1,5,Never,Unfamiliar,Unfamiliar,Never,3.25,3.333,3.5,4.75,4.5,5.333,5.333,3.5
+010,37,1,3,Very rarely,Inexperienced,Neither Inexperienced or Experienced,Never,2.5,1.667,2.667,4.417,4.75,4.667,3.667,4.5
+011,19,1,2,Very rarely,Very Inexperienced,Inexperienced,Never,3.75,2.667,3.167,4.636,5.0,4.333,4.667,4.5
+012,20,1,5,Occasionally,Moderately experienced,Moderately experienced,Never,5.0,2.333,3.667,4.25,5.0,4.333,3.0,4.5
+013,20,2,5,Very rarely,Moderately experienced,Moderately experienced,Never,3.0,2.667,2.5,3.667,4.0,4.0,3.333,3.0
+014,21,1,5,Frequently,Inexperienced,Very Inexperienced,Never,2.5,3.333,2.667,4.083,4.25,3.667,4.0,4.5
+015,19,3,5,Very frequently,Neither Inexperienced or Experienced,Neither Inexperienced or Experienced,Very rarely,3.75,1.667,3.667,5.167,5.0,4.333,5.333,6.5
+016,30,2,2,Very rarely,Unfamiliar,Unfamiliar,Never,3.25,2.333,3.167,5.917,6.75,5.667,4.333,7.0
+017,20,1,2,Very frequently,Neither Inexperienced or Experienced,Neither Inexperienced or Experienced,Never,4.25,3.0,3.5,4.333,6.5,5.0,3.0,1.0
+019,23,1,2,Occasionally,Moderately experienced,Moderately experienced,Never,3.75,4.333,3.333,4.25,4.25,4.667,3.667,4.5
+020,19,1,2,Very frequently,Unfamiliar,Unfamiliar,Never,4.5,1.333,3.167,4.917,5.75,4.0,5.0,4.5
+021,18,1,5,Frequently,Very Experienced,Experienced,Rarely,3.25,1.333,3.5,4.5,5.25,3.0,4.333,5.5
+022,21,1,6,Very frequently,Moderately experienced,Moderately experienced,Never,2.75,2.667,3.0,4.083,5.0,3.667,4.333,2.5
+024,26,1,2,Very rarely,Moderately experienced,Neither Inexperienced or Experienced,Occasionally,5.0,2.333,3.167,4.417,4.5,4.333,4.667,4.0
+026,19,2,5,Occasionally,Neither Inexperienced or Experienced,Neither Inexperienced or Experienced,Never,3.5,3.333,2.667,3.917,4.75,4.0,4.0,2.0
+027,18,1,5,Occasionally,Neither Inexperienced or Experienced,Neither Inexperienced or Experienced,Never,2.0,1.333,3.667,4.0,5.0,3.333,3.0,4.5
+028,22,2,5,Rarely,Inexperienced,Inexperienced,Never,5.0,2.0,2.833,4.917,5.0,6.333,5.0,2.5
+029,21,1,2,Frequently,Moderately experienced,Moderately experienced,Very rarely,1.75,2.0,3.0,4.25,4.75,4.667,3.667,3.5
+030,22,3,5,Very frequently,Moderately experienced,Moderately experienced,Never,3.75,2.0,2.667,4.75,6.0,4.667,3.333,4.5
+031,23,1,2,Occasionally,Unfamiliar,Unfamiliar,Never,2.0,1.667,2.5,5.083,4.75,5.667,5.0,5.0
+032,21,1,2,Occasionally,Moderately experienced,Moderately experienced,Never,2.5,3.0,3.333,3.75,4.5,3.667,2.667,4.0
+033,40,1,2,Never,Unfamiliar,Unfamiliar,Never,4.0,2.333,2.833,5.667,6.25,4.667,6.667,4.5
+034,22,2,5,Very rarely,Very Inexperienced,Very Inexperienced,Never,2.75,2.0,3.5,4.417,4.75,4.333,4.0,4.5
+035,30,2,2,Rarely,Moderately experienced,Moderately experienced,Never,3.25,2.333,3.0,5.0,4.333,5.333,4.333,6.5
+036,22,1,5,Very frequently,Moderately experienced,Moderately experienced,Never,3.5,1.0,3.333,4.583,5.75,4.333,3.333,4.5
+037,19,1,5,Occasionally,Moderately experienced,Experienced,Never,3.5,1.667,3.333,3.583,3.75,3.667,3.333,3.5
+038,24,2,5,Rarely,Very Inexperienced,Very Inexperienced,Never,4.0,1.0,2.833,4.75,5.0,3.333,5.333,5.5
+039,22,1,5,Frequently,Inexperienced,Inexperienced,Never,3.0,3.333,2.667,3.583,3.25,4.0,3.667,3.5
+040,19,2,2,Rarely,Very Inexperienced,Very Inexperienced,Never,4.0,2.667,3.333,3.25,4.5,3.333,2.0,2.5
+041,19,1,5,Very frequently,Very Experienced,Experienced,Never,3.5,2.333,3.667,5.25,5.25,5.0,4.333,7.0
+042,19,1,2,Very frequently,Very Experienced,Very Experienced,Never,3.25,2.0,3.333,3.833,3.5,3.667,4.667,3.5
+043,18,2,5,Occasionally,Inexperienced,Inexperienced,Never,3.25,2.667,2.833,3.917,4.25,3.667,4.333,3.0
+044,20,2,5,Very rarely,Very Inexperienced,Very Inexperienced,Never,2.5,2.0,3.5,4.818,6.0,5.333,3.5,3.0
+045,18,2,5,Never,Moderately experienced,Moderately experienced,Never,4.0,3.667,3.5,4.5,3.75,5.667,4.667,4.0
+046,43,2,5,Occasionally,Very Inexperienced,Very Inexperienced,Never,2.75,1.667,3.667,3.583,4.0,3.667,3.0,3.5
