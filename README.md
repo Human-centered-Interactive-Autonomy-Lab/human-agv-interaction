@@ -46,6 +46,12 @@ It includes:
 
 ---
 
+### gifs/
+This folder contains example GIFs showing participant interactions with the AGV.  
+These examples are included to help reviewers visually inspect representative interaction patterns discussed in the study.
+
+---
+
 ## Notes
 
 - Behavioral clustering identifies patterns such as **Skeptical** and **Deliberate** user behaviors.
