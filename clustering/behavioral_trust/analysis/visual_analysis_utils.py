@@ -1625,7 +1625,6 @@ def plot_cross_first_by_cluster(
         plt.savefig(save_path, bbox_inches="tight", pad_inches=0.1)
     plt.show()
 
-
 def plot_cross_first_between_clusters(
     df: pd.DataFrame,
     cluster_file: pd.DataFrame,
