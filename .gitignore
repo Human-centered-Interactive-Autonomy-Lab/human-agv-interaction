@@ -1,4 +1,6 @@
 .venv/
 .Rproj.user/
+.RData
+.Rhistory
 .vscode/
 data/raw/per_0.1_second_data.csv

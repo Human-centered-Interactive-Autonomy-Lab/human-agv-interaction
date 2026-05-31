@@ -17,12 +17,23 @@ library("here")
 
 oopts <- options(max.print = 24, digits = 4, scipen = 1)
 options(oopts)
-# Make sure the working directory is set to the script's location (RStudio: Session → Set Working Directory → To Source File Location
-input_path <- here::here("data", "processed", "behavioral_clustering_data.csv")
+
+# ------------------------------------------------------------
+# Load data
+# ------------------------------------------------------------
+
+input_path <- "C:/Users/HIALAB/Box/Human_AGV_project/Modeling/human-agv-interaction/data/processed/behavioral_clustering_data.csv"
 per_second_data <- read.csv(input_path)
+
 head(per_second_data)
 glimpse(per_second_data)
 length(unique(per_second_data$PID))
+
+per_second_data$PID <- as.factor(per_second_data$PID)
+
+# ------------------------------------------------------------
+# Convert each behavioral variable to funData
+# ------------------------------------------------------------
 
 make_funData <- function(per_second_data, variable) {
   argvals <- sort(unique(per_second_data$Time_Index))
@@ -30,7 +41,7 @@ make_funData <- function(per_second_data, variable) {
   per_second_data_wide <- per_second_data %>%
     dplyr::select(PID, Time_Index, !!sym(variable)) %>%
     pivot_wider(
-      names_from = Time_Index, 
+      names_from = Time_Index,
       values_from = all_of(variable),
       values_fill = NA
     ) %>%
@@ -39,10 +50,18 @@ make_funData <- function(per_second_data, variable) {
   X <- as.matrix(per_second_data_wide[, -1])
   fd <- funData(argvals = argvals, X = X)
   names(fd) <- paste0("PID_", per_second_data_wide$PID)
+  
   return(fd)
 }
 
-object_vars <- c('Frechet_Distance', 'Gaze_Angle_to_AGV', 'User_Speed', 'Gaze_Instability')
+object_vars <- c(
+  "Frechet_Distance",
+  "Gaze_Angle_to_AGV",
+  "User_Speed",
+  "Gaze_Instability"
+)
+
+var_names <- object_vars
 
 objdata <- multiFunData(
   setNames(
@@ -51,65 +70,44 @@ objdata <- multiFunData(
   )
 )
 
-class(per_second_data$PID)
-
-# Ensure PID is a factor
-per_second_data$PID <- as.factor(per_second_data$PID)
-
-# Every 10th PID
-pids <- sort(unique(per_second_data$PID))
-pids_subset <- pids[seq(1, length(pids), by = 15)]
-
-# Match PIDs to funData row names
-fun_names <- names(objdata[[1]])
-fun_pids <- as.numeric(gsub("PID_", "", fun_names))
-
-# Get matching row indices
-keep_indices <- which(fun_pids %in% as.numeric(pids_subset))
-
-# List to store ggplot objects
-plots <- list()
-
-var_names <- c('Frechet_Distance', 'Gaze_Angle_to_AGV', 'User_Speed', 'Gaze_Instability')
-
-# Get every 10th PID again (as before)
-pids <- sort(unique(per_second_data$PID))
-pids_subset <- pids[seq(1, length(pids), by = 10)]
-
-fun_names <- names(objdata[[1]])
-fun_pids <- as.numeric(gsub("PID_", "", fun_names))
-keep_indices <- which(fun_pids %in% as.numeric(pids_subset))
-
-## nObs
 nObs(objdata)
-
-## nObsPoints
 nObsPoints(objdata)
 
-n_pcs <- 2
+# ------------------------------------------------------------
+# Choose number of PCs for MFPCA
+# ------------------------------------------------------------
 
-# --- Run MFPCA
+# For k = 3 or 5, I recommend starting with 3 PCs.
+# You can later try 2, 3, 4 and compare silhouette results.
+n_pcs <- 3
+
+# ------------------------------------------------------------
+# Run MFPCA
+# ------------------------------------------------------------
+
 uniExpansions <- lapply(seq_along(objdata), function(i) {
   list(type = "uFPCA", npc = n_pcs)
 })
 
-mfpca_objdata <- MFPCA(objdata,
-                       M = n_pcs,
-                       uniExpansions = uniExpansions,
-                       fit = TRUE)
+mfpca_objdata <- MFPCA(
+  objdata,
+  M = n_pcs,
+  uniExpansions = uniExpansions,
+  fit = TRUE
+)
+
 summary(mfpca_objdata)
 
-# Choose a few user indices to visualize
-obs <- c(1, 10)  # or any PID row indices
+# ------------------------------------------------------------
+# Plot original curves and fitted MFPCA curves
+# ------------------------------------------------------------
 
-# Choose which PIDs to plot (e.g., every 20th one)
 fun_names <- names(objdata[[1]])
 obs <- which(names(objdata[[1]]) %in% fun_names[seq(1, length(fun_names), by = 25)])
 
-# List to hold plots
 plots <- list()
 
-for (i in 1:3) {
+for (i in seq_along(objdata)) {
   color_vec <- hue_pal()(length(obs))
   
   g <- autoplot(objdata[[i]], obs = obs) +
@@ -127,7 +125,9 @@ for (i in 1:3) {
     ) +
     geom_line(aes(colour = obs)) +
     autolayer(
-      mfpca_objdata$fit[[i]], obs = obs, lty = 2,
+      mfpca_objdata$fit[[i]],
+      obs = obs,
+      lty = 2,
       col = rep(color_vec, each = nObsPoints(mfpca_objdata$fit[[i]]))
     ) +
     theme_bw(base_size = 12)
@@ -135,30 +135,38 @@ for (i in 1:3) {
   plots[[i]] <- g
 }
 
-# Arrange all three plots in one row
 gridExtra::grid.arrange(
   grobs = plots,
   nrow = 1
 )
 
-# --- Scree plots
+# ------------------------------------------------------------
+# Scree plots
+# ------------------------------------------------------------
+
 screeplot(mfpca_objdata, main = "Screeplot - lines")
 screeplot(mfpca_objdata, type = "barplot", main = "Screeplot - barplot")
 
-# --- Mean function plots per component
+# ------------------------------------------------------------
+# Mean function plots
+# ------------------------------------------------------------
+
 g_mean <- autoplot(mfpca_objdata$meanFunction, lwd = 1.5)
 
 g_mean_list <- lapply(seq_along(objdata), function(i) {
-  g_mean[[i]] + 
+  g_mean[[i]] +
     scale_y_continuous(limits = range(objdata[[i]]@X, na.rm = TRUE)) +
     labs(x = "Normalized Time", y = names(objdata)[i])
 })
-grid.arrange(grobs = g_mean_list, ncol = 3)
 
-# --- Parameters ---
-pc_colors <- c("#B80C0C", "#0C0CB8", "#129412")
+grid.arrange(grobs = g_mean_list, ncol = 4)
 
-# --- Plotting function ---
+# ------------------------------------------------------------
+# Principal component loading plots
+# ------------------------------------------------------------
+
+pc_colors <- hue_pal()(n_pcs)
+
 plot_var_with_color <- function(index, title) {
   autoplot(mfpca_objdata$functions[[index]]) +
     geom_hline(yintercept = 0, col = "grey70", linetype = "dashed") +
@@ -168,152 +176,268 @@ plot_var_with_color <- function(index, title) {
     theme_bw(base_size = 12)
 }
 
-# --- Create plots using var_names ---
-g_list <- lapply(1:4, function(i) plot_var_with_color(i, var_names[i]))
+g_list <- lapply(seq_along(objdata), function(i) {
+  plot_var_with_color(i, var_names[i])
+})
 
-# --- Extract shared legend from the first plot ---
 get_legend <- function(myggplot) {
   tmp <- ggplotGrob(myggplot)
   leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
   tmp$grobs[[leg]]
 }
+
 shared_legend <- get_legend(g_list[[1]])
 
-# --- Arrange all three plots and shared legend ---
 grid.arrange(
   grobs = c(
     lapply(g_list, function(g) g + theme(legend.position = "none")),
     list(shared_legend)
   ),
-  ncol = 5,
-  widths = c(1, 1, 1, 1, 0.3)
+  ncol = length(g_list) + 1,
+  widths = c(rep(1, length(g_list)), 0.3)
 )
 
-# --- Score plot
-scoreplot(mfpca_objdata, cex = 0.8, main = "MFPCA Scoreplot", col = rgb(0, 0, 0, alpha = 0.7))
+# ------------------------------------------------------------
+# Score plot
+# ------------------------------------------------------------
 
-# --- Clustering based on first n_pcs
+scoreplot(
+  mfpca_objdata,
+  cex = 0.8,
+  main = "MFPCA Scoreplot",
+  col = rgb(0, 0, 0, alpha = 0.7)
+)
+
+# ------------------------------------------------------------
+# Prepare scores for clustering
+# ------------------------------------------------------------
+
 scores <- mfpca_objdata$scores
-scores_to_use <- scores[, 1:n_pcs]
+scores_to_use <- scores[, 1:n_pcs, drop = FALSE]
+
 colnames(scores_to_use) <- paste0("PC", 1:n_pcs)
 rownames(scores_to_use) <- rownames(scores)
 
+# ------------------------------------------------------------
+# Evaluate possible number of clusters
+# ------------------------------------------------------------
 
-fviz_nbclust(scores_to_use, kmeans, method = "silhouette", k.max = 5) +
-  labs(title = "Silhouette Method for Optimal k")
-
-fviz_nbclust(scores_to_use, kmeans, method = "wss", k.max = 5) +
-  labs(title = "Elbow Method for Optimal k")
-
-kmax <- 5
+kmax <- 10
 set.seed(123)
 
-# Distance matrix (used for silhouette)
 dist_mat <- dist(scores_to_use, method = "euclidean")
 
-# Tot within-cluster sum of squares (Elbow)
 wss <- sapply(1:kmax, function(k) {
   kmeans(scores_to_use, centers = k, nstart = 25)$tot.withinss
 })
 
-# Average silhouette width (start at k = 2)
-sil <- sapply(2:kmax, function(k) {
+sil_kmeans <- sapply(2:kmax, function(k) {
   cl <- kmeans(scores_to_use, centers = k, nstart = 25)$cluster
   mean(silhouette(cl, dist_mat)[, 3])
 })
 
-nb_scores <- data.frame(
-  k   = 1:kmax,
+kmeans_scores <- data.frame(
+  k = 1:kmax,
   WSS = wss,
-  Silhouette = c(NA, sil)   # NA for k = 1 (undefined)
+  Silhouette = c(NA, sil_kmeans)
 )
-print(nb_scores)
 
-if (!inherits(dist_mat, "dist")) dist_mat <- as.dist(dist_mat)
+print(kmeans_scores)
 
-kmax <- 10  # set as you wish
+fviz_nbclust(scores_to_use, kmeans, method = "silhouette", k.max = kmax) +
+  labs(title = paste0("Silhouette Method for Optimal k using ", n_pcs, " PCs"))
+
+fviz_nbclust(scores_to_use, kmeans, method = "wss", k.max = kmax) +
+  labs(title = paste0("Elbow Method for Optimal k using ", n_pcs, " PCs"))
+
+# ------------------------------------------------------------
+# Hierarchical clustering evaluation
+# ------------------------------------------------------------
+
 hc <- hclust(dist_mat, method = "ward.D2")
 
-ks <- 2:min(kmax, attr(dist_mat, "Size"))  # cannot exceed n
+ks <- 2:min(kmax, attr(dist_mat, "Size"))
+
 sil_hc <- sapply(ks, function(k) {
-  cl  <- cutree(hc, k = k)
+  cl <- cutree(hc, k = k)
   sil <- silhouette(cl, dist_mat)
   mean(sil[, "sil_width"], na.rm = TRUE)
 })
 
-hier_scores <- data.frame(k = ks, Silhouette = as.numeric(sil_hc))
-hier_scores
-# K-means clustering
-n_clusters <- 2
-set.seed(123)
-wss <- sapply(1:10, function(k) {
-  kmeans(scores_to_use, centers = k, nstart = 20)$tot.withinss
-})
-
-# --- Run k-means clustering
-kmeans_result <- kmeans(scores_to_use, centers = n_clusters)
-
-# Hierarchical Clustering
-dist_matrix <- dist(scores_to_use, method = "euclidean")
-hc <- hclust(dist_matrix, method = "ward.D2")
-plot(hc, labels = FALSE, main = "Hierarchical Clustering Dendrogram", xlab = "", sub = "")
-hc_clusters <- cutree(hc, k = n_clusters)
-dend_results <- data.frame(PID = rownames(scores_to_use), Cluster = hc_clusters)
-dend <- as.dendrogram(hc)
-dend <- color_branches(dend, k = n_clusters)
-dend <- set(dend, "labels_cex", 0.8)
-plot(dend, main = "Colored Dendrogram with PIDs")
-dend_results$PID <- as.numeric(gsub("PID_", "", dend_results$PID))
-
-table(kmeans_result$cluster, hc_clusters)
-
-# Choose which clustering to use for coloring/plots/saving
-method <- "kmeans"         # <- set to "kmeans" or "hierarchical"
-
-selected_clusters <- switch(
-  method,
-  "kmeans"       = kmeans_result$cluster,
-  "hierarchical" = hc_clusters,
-  stop("method must be 'kmeans' or 'hierarchical'")
+hier_scores <- data.frame(
+  k = ks,
+  Silhouette = as.numeric(sil_hc)
 )
 
-# --- Prepare scores data frame with cleaned PIDs ---
-scores_df <- as.data.frame(scores_to_use)
-colnames(scores_df) <- paste0("PC", seq_len(ncol(scores_to_use)))
-scores_df$PID <- as.numeric(gsub("PID_", "", rownames(scores_to_use)))
+print(hier_scores)
 
-# Use the selected clustering
-scores_df$Cluster <- as.factor(selected_clusters)
+# ------------------------------------------------------------
+# Run clustering for k = 2, 3, and 5
+# ------------------------------------------------------------
 
-# --- Plot (now uses chosen clusters) ---
-plot_pc_pair <- function(x_pc, y_pc) {
+cluster_ks <- c(2, 3, 5)
+
+# Choose method to save as main cluster assignment
+# Options: "kmeans" or "hierarchical"
+method <- "kmeans"
+
+output_dir <- dirname(input_path)
+
+all_cluster_results <- list()
+
+plot_pc_pair <- function(scores_df, x_pc = "PC1", y_pc = "PC2") {
   ggplot(scores_df, aes_string(x = x_pc, y = y_pc, color = "Cluster", label = "PID")) +
     geom_point(size = 3) +
     geom_text(vjust = -0.5, size = 3) +
-    labs(x = x_pc, y = y_pc) +
-    theme_minimal(base_size = 12) +
-    theme(legend.position = "none")
-}
-g1 <- plot_pc_pair("PC1", "PC2")
-grid.arrange(g1, ncol = 1)
-
-# Save results
-output_dir <- dirname(input_path)
-if (method == "kmeans") {
-  saveRDS(
-    list(method = "kmeans", model = kmeans_result, clusters = selected_clusters),
-    file.path(output_dir, "behavioral_kmeans_result.rds")
-  )
-} else {
-  saveRDS(
-    list(method = "hierarchical", model = hc, clusters = selected_clusters),
-    file.path(output_dir, "behavioral_hierarchical_result.rds")
-  )
+    labs(
+      x = x_pc,
+      y = y_pc,
+      color = "Cluster"
+    ) +
+    theme_minimal(base_size = 12)
 }
 
-out_csv <- file.path(
-  output_dir,
-  paste0("cluster_assignments_behavioral_", method, ".csv")
+for (n_clusters in cluster_ks) {
+  
+  set.seed(123)
+  
+  # -------------------------
+  # K-means
+  # -------------------------
+  kmeans_result <- kmeans(
+    scores_to_use,
+    centers = n_clusters,
+    nstart = 25
+  )
+  
+  # -------------------------
+  # Hierarchical
+  # -------------------------
+  hc_clusters <- cutree(hc, k = n_clusters)
+  
+  selected_clusters <- switch(
+    method,
+    "kmeans" = kmeans_result$cluster,
+    "hierarchical" = hc_clusters,
+    stop("method must be either 'kmeans' or 'hierarchical'")
+  )
+  
+  # -------------------------
+  # Prepare output dataframe
+  # -------------------------
+  scores_df <- as.data.frame(scores_to_use)
+  scores_df$PID <- as.numeric(gsub("PID_", "", rownames(scores_to_use)))
+  scores_df$Cluster <- as.factor(selected_clusters)
+  
+  # Optional: also include both clustering results
+  scores_df$KMeans_Cluster <- as.factor(kmeans_result$cluster)
+  scores_df$Hierarchical_Cluster <- as.factor(hc_clusters)
+  
+  # -------------------------
+  # Print comparison table
+  # -------------------------
+  cat("\n====================================\n")
+  cat("Number of clusters:", n_clusters, "\n")
+  cat("Number of PCs:", n_pcs, "\n")
+  cat("Selected method:", method, "\n")
+  cat("====================================\n")
+  
+  print(table(KMeans = kmeans_result$cluster, Hierarchical = hc_clusters))
+  
+  # -------------------------
+  # Plot PC1 vs PC2
+  # -------------------------
+  g_pc12 <- plot_pc_pair(scores_df, "PC1", "PC2") +
+    labs(
+      title = paste0(
+        "Behavioral clustering: ",
+        method,
+        ", k = ",
+        n_clusters,
+        ", PCs = ",
+        n_pcs
+      )
+    )
+  
+  print(g_pc12)
+  
+  # -------------------------
+  # Plot dendrogram for this k
+  # -------------------------
+  dend <- as.dendrogram(hc)
+  dend <- color_branches(dend, k = n_clusters)
+  dend <- set(dend, "labels_cex", 0.8)
+  
+  plot(
+    dend,
+    main = paste0("Colored Dendrogram: k = ", n_clusters, ", PCs = ", n_pcs)
+  )
+  
+  # -------------------------
+  # Save CSV
+  # -------------------------
+  out_csv <- file.path(
+    output_dir,
+    paste0(
+      "cluster_assignments_behavioral_",
+      method,
+      "_k",
+      n_clusters,
+      "_pc",
+      n_pcs,
+      ".csv"
+    )
+  )
+  
+  write.csv(scores_df, file = out_csv, row.names = FALSE)
+  
+  # -------------------------
+  # Save RDS
+  # -------------------------
+  out_rds <- file.path(
+    output_dir,
+    paste0(
+      "behavioral_",
+      method,
+      "_result_k",
+      n_clusters,
+      "_pc",
+      n_pcs,
+      ".rds"
+    )
+  )
+  
+  saveRDS(
+    list(
+      method = method,
+      n_clusters = n_clusters,
+      n_pcs = n_pcs,
+      scores_to_use = scores_to_use,
+      scores_df = scores_df,
+      kmeans_model = kmeans_result,
+      hierarchical_model = hc,
+      selected_clusters = selected_clusters,
+      kmeans_clusters = kmeans_result$cluster,
+      hierarchical_clusters = hc_clusters
+    ),
+    out_rds
+  )
+  
+  all_cluster_results[[paste0("k", n_clusters)]] <- scores_df
+}
+
+# ------------------------------------------------------------
+# Save summary of k-selection metrics
+# ------------------------------------------------------------
+
+write.csv(
+  kmeans_scores,
+  file = file.path(output_dir, paste0("behavioral_kmeans_k_selection_pc", n_pcs, ".csv")),
+  row.names = FALSE
 )
 
-write.csv(scores_df, file = out_csv, row.names = FALSE)
+write.csv(
+  hier_scores,
+  file = file.path(output_dir, paste0("behavioral_hierarchical_k_selection_pc", n_pcs, ".csv")),
+  row.names = FALSE
+)
