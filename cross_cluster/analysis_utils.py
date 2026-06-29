@@ -7,13 +7,572 @@ from matplotlib.patches import Patch, Wedge
 from matplotlib.colors import Normalize
 import numpy as np
 import plotly.graph_objects as go
-from scipy.stats import mannwhitneyu
+from scipy.stats import levene, mannwhitneyu, shapiro, ttest_ind
+from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
+from statsmodels.stats.multitest import multipletests
 from typing import Dict, Tuple
 
 # Set the default font family
 plt.rcParams['font.family'] = 'serif'  # or 'sans-serif', 'monospace', 'cursive', 'fantasy'
 plt.rcParams['font.serif'] = ['DejaVu Serif'] # 'Palatino', 'DejaVu Serif', Times New Roman # List of fonts to try
 plt.rcParams['font.size'] = 15
+
+
+def analyze_cluster_agreement(
+    behavioral_df: pd.DataFrame,
+    subjective_df: pd.DataFrame,
+    pid_col: str = "PID",
+    cluster_col: str = "Cluster",
+    save_path=None,
+    metrics_save_path=None,
+):
+    """Compare behavioral and subjective cluster assignments for shared PIDs.
+
+    Returns the Adjusted Rand Index (ARI), Normalized Mutual Information (NMI),
+    number of shared PIDs, and a behavioral-by-subjective contingency table.
+    When ``save_path`` is provided, the 2x2 contingency table is written to CSV.
+    When ``metrics_save_path`` is provided, ARI, NMI, and the number of shared
+    PIDs are written to a separate CSV report.
+    """
+    required_columns = {pid_col, cluster_col}
+    for name, dataframe in (
+        ("behavioral_df", behavioral_df),
+        ("subjective_df", subjective_df),
+    ):
+        missing_columns = required_columns.difference(dataframe.columns)
+        if missing_columns:
+            raise ValueError(
+                f"{name} is missing required columns: {sorted(missing_columns)}"
+            )
+        duplicate_pids = dataframe.loc[
+            dataframe[pid_col].duplicated(keep=False), pid_col
+        ].unique()
+        if len(duplicate_pids) > 0:
+            raise ValueError(
+                f"{name} contains duplicate {pid_col} values: "
+                f"{duplicate_pids.tolist()}"
+            )
+
+    behavioral = behavioral_df[[pid_col, cluster_col]].rename(
+        columns={cluster_col: "Behavioral Cluster"}
+    )
+    subjective = subjective_df[[pid_col, cluster_col]].rename(
+        columns={cluster_col: "Subjective Cluster"}
+    )
+    merged = pd.merge(
+        behavioral,
+        subjective,
+        on=pid_col,
+        how="inner",
+        validate="one_to_one",
+    ).dropna(subset=["Behavioral Cluster", "Subjective Cluster"])
+
+    if merged.empty:
+        raise ValueError("The clustering files have no shared PIDs with valid labels.")
+
+    behavioral_labels = sorted(merged["Behavioral Cluster"].unique())
+    subjective_labels = sorted(merged["Subjective Cluster"].unique())
+    if len(behavioral_labels) != 2 or len(subjective_labels) != 2:
+        raise ValueError(
+            "Expected exactly two clusters in each file; found "
+            f"{len(behavioral_labels)} behavioral and "
+            f"{len(subjective_labels)} subjective clusters."
+        )
+
+    contingency_table = pd.crosstab(
+        merged["Behavioral Cluster"],
+        merged["Subjective Cluster"],
+        rownames=["Behavioral Cluster"],
+        colnames=["Subjective Cluster"],
+    ).reindex(index=behavioral_labels, columns=subjective_labels, fill_value=0)
+
+    metrics = {
+        "Adjusted Rand Index (ARI)": adjusted_rand_score(
+            merged["Behavioral Cluster"], merged["Subjective Cluster"]
+        ),
+        "Normalized Mutual Information (NMI)": normalized_mutual_info_score(
+            merged["Behavioral Cluster"], merged["Subjective Cluster"]
+        ),
+        "Number of shared PIDs": len(merged),
+    }
+
+    if save_path:
+        save_path = os.fspath(save_path)
+        output_directory = os.path.dirname(save_path)
+        if output_directory:
+            os.makedirs(output_directory, exist_ok=True)
+        contingency_table.to_csv(save_path)
+
+    if metrics_save_path:
+        metrics_save_path = os.fspath(metrics_save_path)
+        output_directory = os.path.dirname(metrics_save_path)
+        if output_directory:
+            os.makedirs(output_directory, exist_ok=True)
+        pd.DataFrame(
+            {"Metric": metrics.keys(), "Value": metrics.values()}
+        ).to_csv(metrics_save_path, index=False)
+
+    return metrics, contingency_table
+
+
+def _hedges_g(first, second):
+    """Bias-corrected standardized mean difference (first minus second)."""
+    first = np.asarray(first, dtype=float)
+    second = np.asarray(second, dtype=float)
+    degrees_of_freedom = len(first) + len(second) - 2
+    if degrees_of_freedom <= 0:
+        return np.nan
+    pooled_variance = (
+        (len(first) - 1) * np.var(first, ddof=1)
+        + (len(second) - 1) * np.var(second, ddof=1)
+    ) / degrees_of_freedom
+    if not np.isfinite(pooled_variance) or pooled_variance <= 0:
+        return np.nan
+    cohens_d = (np.mean(first) - np.mean(second)) / np.sqrt(pooled_variance)
+    correction = 1.0 - (3.0 / (4.0 * degrees_of_freedom - 1.0))
+    return correction * cohens_d
+
+
+def analyze_initial_walking_speed_by_cluster(
+    per_second_df: pd.DataFrame,
+    cluster_df: pd.DataFrame,
+    *,
+    pid_col: str = "PID",
+    cluster_col: str = "Cluster",
+    speed_col: str = "User_Relative_Speed",
+    position_speed_col: str = "User_Speed",
+    distance_col: str = "AGV_User_Distance",
+    timestamp_col: str = "Timestamp",
+    trial_col: str = "Interaction_No",
+    trial_ids=tuple(range(1, 33)),
+    interaction_buffer_seconds: float = 11.0,
+    max_speed_mps: float = 3.0,
+    cluster_labels=None,
+    report_save_path=None,
+):
+    """Compare initial walking speed across two behavioral clusters.
+
+    ``User_Relative_Speed`` is used without rescaling because it is already in
+    m/s. As a unit sanity check, it is compared with ``User_Speed / 100``:
+    ``User_Speed`` is the approximately 1 Hz displacement calculated from the
+    centimeter-valued user positions. For each participant and requested trial,
+    the interaction point is the timestamp of minimum ``AGV_User_Distance``.
+    Valid samples are retained from trial onset through
+    ``interaction_buffer_seconds`` before that point. The function then computes
+    one participant-level mean speed per trial. Trial numbers are derived from
+    PID, DRate, and AGVname using the study's counterbalancing rule.
+    """
+    key_columns = [pid_col, "AGVname", "DRate"]
+    required_per_second = set(
+        key_columns
+        + [speed_col, position_speed_col, distance_col, timestamp_col]
+    )
+    required_cluster = {pid_col, cluster_col}
+    for name, dataframe, required in (
+        ("per_second_df", per_second_df, required_per_second),
+        ("cluster_df", cluster_df, required_cluster),
+    ):
+        missing = required.difference(dataframe.columns)
+        if missing:
+            raise ValueError(f"{name} is missing required columns: {sorted(missing)}")
+
+    samples = per_second_df[
+        key_columns
+        + [speed_col, position_speed_col, distance_col, timestamp_col]
+    ].copy()
+    clusters = cluster_df[[pid_col, cluster_col]].copy()
+
+    samples[pid_col] = pd.to_numeric(samples[pid_col], errors="coerce")
+    samples["AGVname"] = pd.to_numeric(samples["AGVname"], errors="coerce")
+    samples["DRate"] = samples["DRate"].astype(str).str.strip()
+    clusters[pid_col] = pd.to_numeric(clusters[pid_col], errors="coerce")
+
+    if clusters[pid_col].duplicated().any():
+        raise ValueError(f"cluster_df contains duplicate {pid_col} values.")
+
+    high_first_pids = {
+        2, 4, 6, 8, 10, 12, 14, 16, 20, 22,
+        27, 29, 31, 33, 35, 37, 39, 41, 43, 45,
+    }
+    low_first_pids = {
+        1, 3, 7, 9, 11, 13, 15, 17, 19, 21, 24,
+        26, 28, 30, 32, 34, 36, 38, 40, 42, 44, 46,
+    }
+    known_pids = high_first_pids | low_first_pids
+    unknown_pids = sorted(
+        set(samples[pid_col].dropna().astype(int).unique()).difference(known_pids)
+    )
+    if unknown_pids:
+        raise ValueError(
+            f"No counterbalancing order is defined for PIDs: {unknown_pids}"
+        )
+
+    high_first = samples[pid_col].isin(high_first_pids)
+    first_condition = (
+        (high_first & samples["DRate"].eq("High"))
+        | (~high_first & samples["DRate"].eq("Low"))
+    )
+    samples[trial_col] = samples["AGVname"] + np.where(first_condition, 0, 16)
+
+    samples[speed_col] = pd.to_numeric(samples[speed_col], errors="coerce")
+    samples[position_speed_col] = pd.to_numeric(
+        samples[position_speed_col], errors="coerce"
+    )
+    samples[distance_col] = pd.to_numeric(samples[distance_col], errors="coerce")
+    position_speed_mps = samples[position_speed_col] / 100.0
+    audit_mask = (
+        samples[speed_col].between(0.02, max_speed_mps)
+        & position_speed_mps.between(0.02, max_speed_mps)
+    )
+    if audit_mask.sum() < 2:
+        raise ValueError("Not enough valid samples to verify walking-speed units.")
+
+    audit_ratio = samples.loc[audit_mask, speed_col] / position_speed_mps[audit_mask]
+    unit_audit = {
+        "Unit": "m/s",
+        "Audit sample count": int(audit_mask.sum()),
+        "Correlation with User_Speed / 100": float(
+            samples.loc[audit_mask, speed_col].corr(position_speed_mps[audit_mask])
+        ),
+        "Median ratio to User_Speed / 100": float(audit_ratio.median()),
+    }
+    if (
+        unit_audit["Correlation with User_Speed / 100"] < 0.8
+        or not 0.5 <= unit_audit["Median ratio to User_Speed / 100"] <= 1.5
+    ):
+        raise ValueError(
+            f"{speed_col} failed the SI unit sanity check: {unit_audit}"
+        )
+
+    samples["_time"] = pd.to_timedelta(
+        samples[timestamp_col].astype(str), errors="coerce"
+    )
+    trial_samples = samples[samples[trial_col].isin(trial_ids)].copy()
+    valid_interaction_rows = trial_samples.dropna(subset=[distance_col, "_time"])
+    interaction_points = (
+        valid_interaction_rows.sort_values(
+            [pid_col, trial_col, distance_col, "_time"]
+        )
+        .drop_duplicates([pid_col, trial_col], keep="first")
+        [[pid_col, trial_col, "_time", distance_col]]
+        .rename(
+            columns={
+                "_time": "Interaction_Time",
+                distance_col: "Minimum_AGV_User_Distance",
+            }
+        )
+    )
+    trial_samples = trial_samples.merge(
+        interaction_points,
+        on=[pid_col, trial_col],
+        how="left",
+        validate="many_to_one",
+    )
+    trial_samples["Seconds_Before_Interaction"] = (
+        trial_samples["Interaction_Time"] - trial_samples["_time"]
+    ).dt.total_seconds()
+    selected = trial_samples[
+        trial_samples["Seconds_Before_Interaction"].ge(
+            interaction_buffer_seconds
+        )
+        & trial_samples[speed_col].between(0.0, max_speed_mps)
+    ].copy()
+    if selected.empty:
+        raise ValueError(
+            "No valid speed samples were found from trial onset through "
+            f"{interaction_buffer_seconds:g} seconds before the minimum-distance "
+            f"interaction points in trials {tuple(trial_ids)}."
+        )
+
+    participant_speeds = (
+        selected.groupby([pid_col, trial_col], as_index=False)
+        .agg(
+            Mean_Speed_mps=(speed_col, "mean"),
+            Valid_Samples=(speed_col, "size"),
+            Interaction_Time=("Interaction_Time", "first"),
+            Minimum_AGV_User_Distance=("Minimum_AGV_User_Distance", "first"),
+            Interaction_From_Trial_Start_Seconds=(
+                "Seconds_Before_Interaction",
+                "max",
+            ),
+        )
+        .merge(clusters, on=pid_col, how="inner", validate="many_to_one")
+    )
+    participant_speeds = participant_speeds[
+        participant_speeds["Valid_Samples"] >= 2
+    ].copy()
+
+    cluster_ids = sorted(participant_speeds[cluster_col].dropna().unique())
+    if len(cluster_ids) != 2:
+        raise ValueError(f"Expected exactly two clusters, found: {cluster_ids}")
+
+    metric_specs = (("Mean_Speed_mps", "Mean speed", "m/s"),)
+    cluster_labels = cluster_labels or {}
+    summary_rows = []
+    test_rows = []
+    for trial_id in trial_ids:
+        trial_data = participant_speeds[
+            participant_speeds[trial_col] == trial_id
+        ]
+        missing_for_trial = clusters[pid_col].nunique() - trial_data[pid_col].nunique()
+        for metric_column, metric_name, metric_unit in metric_specs:
+            metric_data = trial_data.dropna(subset=[metric_column])
+            first = metric_data.loc[
+                metric_data[cluster_col] == cluster_ids[0], metric_column
+            ]
+            second = metric_data.loc[
+                metric_data[cluster_col] == cluster_ids[1], metric_column
+            ]
+            first_shapiro = shapiro(first) if len(first) >= 3 else None
+            second_shapiro = shapiro(second) if len(second) >= 3 else None
+            variance_test = (
+                levene(first, second, center="mean")
+                if len(first) >= 2 and len(second) >= 2
+                else None
+            )
+            assumption_results = {
+                "Shapiro_Skeptical_W": (
+                    float(first_shapiro.statistic) if first_shapiro else np.nan
+                ),
+                "Shapiro_Skeptical_p": (
+                    float(first_shapiro.pvalue) if first_shapiro else np.nan
+                ),
+                "Shapiro_Deliberate_W": (
+                    float(second_shapiro.statistic) if second_shapiro else np.nan
+                ),
+                "Shapiro_Deliberate_p": (
+                    float(second_shapiro.pvalue) if second_shapiro else np.nan
+                ),
+                "Levene_F": (
+                    float(variance_test.statistic) if variance_test else np.nan
+                ),
+                "Levene_p": (
+                    float(variance_test.pvalue) if variance_test else np.nan
+                ),
+                "Levene_df1": 1.0 if variance_test else np.nan,
+                "Levene_df2": (
+                    float(len(first) + len(second) - 2)
+                    if variance_test else np.nan
+                ),
+            }
+
+            if first.empty or second.empty:
+                test_row = {
+                    "Trial": int(trial_id),
+                    "Measure": metric_name,
+                    "Test": "Not run: both clusters require analyzable participants",
+                    "Test_Statistic": np.nan,
+                    "Test_df": np.nan,
+                    "p_Value": np.nan,
+                    "Effect_Size": np.nan,
+                    "Effect_Size_Type": "Not available",
+                    "Effect_Size_df": np.nan,
+                    "Normality_Decision": "Unavailable: both clusters are required",
+                    **assumption_results,
+                }
+            else:
+                both_normal = (
+                    first_shapiro is not None
+                    and second_shapiro is not None
+                    and first_shapiro.pvalue > 0.05
+                    and second_shapiro.pvalue > 0.05
+                )
+                if both_normal:
+                    test = ttest_ind(first, second, equal_var=False)
+                    test_row = {
+                        "Trial": int(trial_id),
+                        "Measure": metric_name,
+                        "Test": "Welch's t-test (two-sided)",
+                        "Test_Statistic": float(test.statistic),
+                        "Test_df": float(test.df),
+                        "p_Value": float(test.pvalue),
+                        "Effect_Size": float(_hedges_g(first, second)),
+                        "Effect_Size_Type": "Hedges' g",
+                        "Effect_Size_df": float(len(first) + len(second) - 2),
+                        "Normality_Decision": "Both cluster Shapiro p-values > 0.05",
+                        **assumption_results,
+                    }
+                else:
+                    test = mannwhitneyu(first, second, alternative="two-sided")
+                    rank_biserial = (
+                        2.0 * float(test.statistic) / (len(first) * len(second))
+                    ) - 1.0
+                    test_row = {
+                        "Trial": int(trial_id),
+                        "Measure": metric_name,
+                        "Test": "Mann-Whitney U (two-sided)",
+                        "Test_Statistic": float(test.statistic),
+                        "Test_df": np.nan,
+                        "p_Value": float(test.pvalue),
+                        "Effect_Size": rank_biserial,
+                        "Effect_Size_Type": "Rank-biserial r",
+                        "Effect_Size_df": np.nan,
+                        "Normality_Decision": (
+                            "At least one Shapiro p-value <= 0.05 or unavailable"
+                        ),
+                        **assumption_results,
+                    }
+            test_row["Effect_Size_Direction"] = "Positive = Skeptical > Deliberate"
+            test_rows.append(test_row)
+
+            for cluster_id in cluster_ids:
+                cluster_values = metric_data.loc[
+                    metric_data[cluster_col] == cluster_id, metric_column
+                ]
+                sample_counts = metric_data.loc[
+                    metric_data[cluster_col] == cluster_id, "Valid_Samples"
+                ]
+                summary_rows.append(
+                    {
+                        "Trial": int(trial_id),
+                        "Window": (
+                            "Trial onset through "
+                            f"{interaction_buffer_seconds:g} seconds before "
+                            "minimum AGV distance"
+                        ),
+                        "Measure": metric_name,
+                        "Unit": metric_unit,
+                        cluster_col: cluster_id,
+                        "Cluster_Label": cluster_labels.get(
+                            cluster_id, f"Cluster {cluster_id}"
+                        ),
+                        "N": len(cluster_values),
+                        "Group_Mean": cluster_values.mean(),
+                        "Group_SD": cluster_values.std(),
+                        "Group_Median": cluster_values.median(),
+                        "Valid_Samples_Min": (
+                            int(sample_counts.min()) if not sample_counts.empty else np.nan
+                        ),
+                        "Valid_Samples_Median": float(sample_counts.median()),
+                        "Valid_Samples_Max": (
+                            int(sample_counts.max()) if not sample_counts.empty else np.nan
+                        ),
+                        "Missing_Participants_for_Trial": missing_for_trial,
+                        "Unit_Audit_Correlation": unit_audit[
+                            "Correlation with User_Speed / 100"
+                        ],
+                        "Unit_Audit_Median_Ratio": unit_audit[
+                            "Median ratio to User_Speed / 100"
+                        ],
+                    }
+                )
+
+    summary = pd.DataFrame(summary_rows)
+    test_results = pd.DataFrame(test_rows)
+    test_results["Holm_Adjusted_p"] = np.nan
+    finite_tests = test_results["p_Value"].notna()
+    test_results.loc[finite_tests, "Holm_Adjusted_p"] = multipletests(
+        test_results.loc[finite_tests, "p_Value"], method="holm"
+    )[1]
+
+    base_columns = [
+        "Trial", "Window", "Measure", "Unit",
+        "Missing_Participants_for_Trial",
+        "Unit_Audit_Correlation", "Unit_Audit_Median_Ratio",
+    ]
+    statistic_columns = [
+        "N", "Group_Mean", "Group_SD", "Group_Median",
+        "Valid_Samples_Min", "Valid_Samples_Median", "Valid_Samples_Max",
+    ]
+    report = None
+    for cluster_index, cluster_id in enumerate(cluster_ids):
+        cluster_summary = summary[summary[cluster_col] == cluster_id].copy()
+        cluster_label = cluster_labels.get(cluster_id, f"Cluster {cluster_id}")
+        prefix = str(cluster_label).replace(" ", "_")
+        renamed_statistics = {
+            column: f"{prefix}_{column}" for column in statistic_columns
+        }
+        if cluster_index == 0:
+            cluster_report = cluster_summary[
+                base_columns + statistic_columns
+            ].rename(columns=renamed_statistics)
+            report = cluster_report
+        else:
+            cluster_report = cluster_summary[
+                ["Trial", "Measure"] + statistic_columns
+            ].rename(columns=renamed_statistics)
+            report = report.merge(
+                cluster_report,
+                on=["Trial", "Measure"],
+                how="outer",
+                validate="one_to_one",
+            )
+    report = report.merge(
+        test_results,
+        on=["Trial", "Measure"],
+        how="left",
+        validate="one_to_one",
+    )
+
+    if report_save_path:
+        report_save_path = os.fspath(report_save_path)
+        output_directory = os.path.dirname(report_save_path)
+        if output_directory:
+            os.makedirs(output_directory, exist_ok=True)
+        report.to_csv(report_save_path, index=False)
+
+    return summary, participant_speeds, test_results, unit_audit
+
+
+def plot_pre_interaction_walking_speed_trends(
+    summary: pd.DataFrame,
+    *,
+    cluster_col: str = "Cluster",
+    save_path=None,
+):
+    """Plot all-trial trends for participant-level pre-interaction mean speed."""
+    required = {
+        "Trial", "Measure", cluster_col, "Cluster_Label",
+        "N", "Group_Mean", "Group_SD",
+    }
+    missing = required.difference(summary.columns)
+    if missing:
+        raise ValueError(f"summary is missing required columns: {sorted(missing)}")
+
+    colors = {1: "#1f77b4", 2: "#ff7f0e"}
+    fig, ax = plt.subplots(1, 1, figsize=(13, 5))
+    measure_data = summary[summary["Measure"] == "Mean speed"]
+    for cluster_id in sorted(measure_data[cluster_col].dropna().unique()):
+        cluster_data = measure_data[
+            measure_data[cluster_col] == cluster_id
+        ].sort_values("Trial")
+        plot_mean = cluster_data["Group_Mean"].where(cluster_data["N"].ge(2))
+        sem = (
+            cluster_data["Group_SD"] / np.sqrt(cluster_data["N"])
+        ).where(cluster_data["N"].ge(2))
+        label = cluster_data["Cluster_Label"].dropna().iloc[0]
+        ax.errorbar(
+            cluster_data["Trial"],
+            plot_mean,
+            yerr=sem,
+            marker="o",
+            markersize=4,
+            linewidth=1.5,
+            capsize=2,
+            color=colors.get(cluster_id),
+            label=label,
+        )
+    ax.set_ylabel("Mean Speed (m/s)")
+    ax.grid(True, linestyle="--", alpha=0.3)
+    ax.legend(title="Behavioral Cluster")
+    ax.set_title(
+        "Walking-Speed Trends Before AGV Interaction\n"
+        "(through 11 seconds before minimum AGV distance)"
+    )
+    ax.set_xlabel("Trial")
+    ax.set_xticks(np.arange(1, 33))
+    ax.tick_params(axis="x", labelrotation=90)
+    plt.tight_layout()
+
+    if save_path:
+        save_path = os.fspath(save_path)
+        output_directory = os.path.dirname(save_path)
+        if output_directory:
+            os.makedirs(output_directory, exist_ok=True)
+        fig.savefig(save_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    return fig, ax
+
 
 def plot_trust_transition(df, save_path=None):
     df = df[df['Trust_before'].notna()]

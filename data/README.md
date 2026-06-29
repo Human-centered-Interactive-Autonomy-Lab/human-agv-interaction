@@ -64,9 +64,6 @@ This folder contains processed datasets used for clustering and analysis.
 - **cluster_assignments_subjective_kmeans.csv**  
   Cluster labels assigned using k-means clustering on subjective data.
 
-- **cluster_assignments_subjective_hierarchical.csv**  
-  Cluster labels assigned using hierarchical clustering on subjective data.
-
 ---
 
 ## Notes

@@ -23,6 +23,33 @@ def main():
     behavioral_clustering_data = read_csv_with_source(os.path.join(processed_dir, 'behavioral_clustering_data.csv'))
     per_second_data = read_csv_with_source(os.path.join(raw_dir, 'per_second_data.csv'))
 
+    agreement_metrics, contingency_table = analyze_cluster_agreement(
+        behavioral_clustering_assignments,
+        subjective_clustering_assignments,
+        save_path=processed_dir / "cluster_agreement_contingency_table.csv",
+        metrics_save_path=processed_dir / "cluster_agreement_metrics.csv",
+    )
+    print("Cluster agreement metrics:")
+    for metric, value in agreement_metrics.items():
+        print(f"  {metric}: {value:.3f}" if isinstance(value, float) else f"  {metric}: {value}")
+    print("\nContingency table:")
+    print(contingency_table)
+
+    speed_summary, _, speed_test, speed_unit_audit = analyze_initial_walking_speed_by_cluster(
+        per_second_data,
+        behavioral_clustering_assignments,
+        cluster_labels={1: "Skeptical", 2: "Deliberate"},
+        report_save_path=processed_dir / "all_32_trials_until_11_seconds_before_interaction_cluster_report.csv",
+    )
+    plot_pre_interaction_walking_speed_trends(
+        speed_summary,
+        save_path=Path.cwd() / "cross_cluster" / "figures" / "all_32_trials_11_second_buffer_walking_speed_trends.png",
+    )
+    print("\nInitial walking speed by behavioral cluster:")
+    print(speed_summary.to_string(index=False))
+    print(f"Unit audit: {speed_unit_audit}")
+    print(f"Statistical test: {speed_test}")
+
     # Behavioral clustering process visulization
     columns_to_visualize = ['Gaze_Angle_to_AGV', 'User_Speed', 'Gaze_Instability', 'Frechet_Distance']
     save_fig_path=Path.cwd() / "cross_cluster" / "figures" 
